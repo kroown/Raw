@@ -156,9 +156,7 @@ void Codegen::gen_var_decl(VarDeclStmt* v) {
   locals[v->name] = stack_offs;
   if (v->initializer) gen_expr(v->initializer.get());
   else emit_raw("  xor rax, rax");
-  // Zero-initialize the first 8 bytes
   emit_raw("  mov [rbp - " + std::to_string(stack_offs) + "], rax");
-  // For larger buffers, zero the rest
   for (int off = 8; off < size; off += 8) {
     emit_raw("  mov [rbp - " + std::to_string(stack_offs - off) + "], rax");
   }

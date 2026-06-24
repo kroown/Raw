@@ -57,38 +57,34 @@ int main(int argc, char** argv) {
 
   std::string source = read_file(input_path);
 
-  // Tokenize
+  // tokenize
   Lexer lex(source);
   auto tokens = lex.tokenize();
 
-  // Parse
+  // parse
   Parser parser(tokens);
   auto prog = parser.parse();
   if (parser.had_error()) die(parser.error_msg());
 
-  // Codegen
+  // codegen
   Codegen cg(prog.get());
   std::string asm_text = cg.generate();
   if (cg.had_error()) die(cg.error_msg());
 
-  // Write .s file
+  // write .s
   std::string asm_path = output_path + ".s";
   write_file(asm_path, asm_text);
 
-  // Assemble with gas
+  // assemble
   std::string obj_path = output_path + ".o";
   std::string as_cmd = "as " + asm_path + " -o " + obj_path;
   int ret = std::system(as_cmd.c_str());
   if (ret != 0) die("assembly failed");
 
-  // Link with ld (link libc and SDL2 for extern functions)
+  // link
   std::string ld_cmd = "ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 " + obj_path + " -lc -lSDL2 -o " + output_path;
   ret = std::system(ld_cmd.c_str());
   if (ret != 0) die("linking failed");
-
-  // Clean up temp files
-  //std::remove(asm_path.c_str());
-  //std::remove(obj_path.c_str());
 
   std::cout << output_path << "\n";
   return 0;

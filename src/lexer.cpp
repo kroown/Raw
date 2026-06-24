@@ -163,13 +163,9 @@ std::vector<Token> Lexer::tokenize() {
       case '>':
         add_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
         break;
-      case '&': add_token(match('&') ? TokenType::PIPE : TokenType::AMPERSAND);
-        if (tokens.back().type == TokenType::PIPE) {
-          // Actually & is AMPERSAND, && should be logical AND - but I don't have a token for that
-        }
-        break;
+      case '&': add_token(match('&') ? TokenType::PIPE : TokenType::AMPERSAND); break;
       case '|':
-        if (match('|')) {} // skip || for now
+        if (match('|')) {}
         else add_token(TokenType::PIPE);
         break;
       case '~': add_token(TokenType::TILDE); break;

@@ -394,10 +394,10 @@ std::unique_ptr<Expr> Parser::primary() {
     return v;
   }
   if (match(TokenType::LPAREN)) {
-    // Could be sizeof(type) or (expr)
+    // sizeof(type) or (expr)
     if (peek().type == TokenType::INT_KW || peek().type == TokenType::CHAR_KW ||
         peek().type == TokenType::BOOL_KW || peek().type == TokenType::STR_KW) {
-      parse_error("sizeof not implemented here");
+      parse_error("sizeof not implemented");
       return std::make_unique<IntegerExpr>();
     }
     auto e = expression();
