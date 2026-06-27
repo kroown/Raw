@@ -1,9 +1,6 @@
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=555555&height=200&section=header&text=raw&fontSize=70&fontAlignY=35&animation=twinkling">
-</p>
-<p align="center" style="margin-top: -8px;">
-  language · linux · raw
-</p>
+# raw
+
+language · linux · raw
 
 <p align="center">
   <img src="https://skillicons.dev/icons?i=linux,cpp">
@@ -101,6 +98,4 @@ src/
 
 the compiler pipeline: source → lexer → tokens → parser → ast → codegen → assembly → `as` → object → `ld` → executable.
 
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=555555&height=100&section=footer">
-</p>
+
