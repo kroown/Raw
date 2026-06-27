@@ -6,8 +6,10 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <sys/stat.h>
-#include <unistd.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 [[noreturn]] void die(const std::string& msg) {
   std::cerr << "rawc: error: " << msg << "\n";
@@ -24,10 +26,15 @@ std::string read_file(const std::string& path) {
 
 std::string base_name(const std::string& path) {
   size_t dot = path.rfind('.');
+#ifdef _WIN32
+  size_t slash = path.rfind('\\');
+  if (slash == std::string::npos) slash = path.rfind('/');
+#else
   size_t slash = path.rfind('/');
+#endif
   if (slash == std::string::npos) slash = 0; else slash++;
   std::string name = path.substr(slash);
-  if (dot != std::string::npos) name = name.substr(0, dot);
+  if (dot != std::string::npos && dot > slash) name = name.substr(0, dot);
   return name;
 }
 
@@ -36,6 +43,42 @@ void write_file(const std::string& path, const std::string& content) {
   if (!f) die("cannot write '" + path + "'");
   f << content;
 }
+
+#ifdef _WIN32
+std::string find_gcc() {
+  // check PATH first
+  char* path_env = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&path_env, &len, "PATH") == 0 && path_env) {
+    std::string paths(path_env);
+    free(path_env);
+    size_t start = 0;
+    while (true) {
+      size_t sep = paths.find(';', start);
+      std::string dir = paths.substr(start, sep - start);
+      std::string candidate = dir + "\\gcc.exe";
+      std::ifstream test(candidate);
+      if (test) return "gcc";
+      if (sep == std::string::npos) break;
+      start = sep + 1;
+    }
+  }
+  // common MinGW locations
+  const char* locations[] = {
+    "C:\\msys64\\mingw64\\bin\\gcc.exe",
+    "C:\\msys64\\ucrt64\\bin\\gcc.exe",
+    "C:\\msys64\\clang64\\bin\\gcc.exe",
+    "C:\\mingw64\\bin\\gcc.exe",
+    "C:\\mingw32\\bin\\gcc.exe",
+    nullptr
+  };
+  for (int i = 0; locations[i]; i++) {
+    std::ifstream test(locations[i]);
+    if (test) return std::string(locations[i]);
+  }
+  return "";
+}
+#endif
 
 int main(int argc, char** argv) {
   if (argc < 2) die("usage: rawc <input.raw> [-o output]");
@@ -57,35 +100,32 @@ int main(int argc, char** argv) {
 
   std::string source = read_file(input_path);
 
-  // tokenize
   Lexer lex(source);
   auto tokens = lex.tokenize();
 
-  // parse
   Parser parser(tokens);
   auto prog = parser.parse();
   if (parser.had_error()) die(parser.error_msg());
 
-  // codegen
   Codegen cg(prog.get());
   std::string asm_text = cg.generate();
   if (cg.had_error()) die(cg.error_msg());
 
-  // write .s
   std::string asm_path = output_path + ".s";
   write_file(asm_path, asm_text);
 
-  // assemble
-  std::string obj_path = output_path + ".o";
-  std::string as_cmd = "as " + asm_path + " -o " + obj_path;
-  int ret = std::system(as_cmd.c_str());
-  if (ret != 0) die("assembly failed");
+  std::string exe_path = output_path;
+#ifdef _WIN32
+  exe_path += ".exe";
+  std::string gcc_path = find_gcc();
+  if (gcc_path.empty()) die("gcc not found. install MinGW (https://www.mingw-w64.org) or MSYS2 (https://www.msys2.org)");
+  std::string cmd = gcc_path + " " + asm_path + " -o " + exe_path;
+#else
+  std::string cmd = "gcc " + asm_path + " -o " + exe_path;
+#endif
+  int ret = std::system(cmd.c_str());
+  if (ret != 0) die("assembly/linking failed");
 
-  // link
-  std::string ld_cmd = "ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 " + obj_path + " -lc -lSDL2 -o " + output_path;
-  ret = std::system(ld_cmd.c_str());
-  if (ret != 0) die("linking failed");
-
-  std::cout << output_path << "\n";
+  std::cout << exe_path << "\n";
   return 0;
 }

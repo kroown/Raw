@@ -31,6 +31,8 @@ void Codegen::emit_rodata() {
     }
     rodata_ << "\"\n";
   }
+  rodata_ << ".FMT_STR: .asciz \"%s\"\n";
+  rodata_ << ".FMT_INT: .asciz \"%d\"\n";
 }
 
 void Codegen::emit_raw(const std::string& s) {
@@ -42,40 +44,24 @@ void Codegen::emit_helpers() {
   helpers_emitted = true;
 
   emit_raw("");
-  emit_raw("# print_int helper");
+  emit_raw("# print_int helper (uses libc printf)");
+  emit_raw(".global print_int");
   emit_raw("print_int:");
   emit_raw("  push rbp");
   emit_raw("  mov rbp, rsp");
+#ifdef _WIN32
   emit_raw("  sub rsp, 32");
-  emit_raw("  mov dword ptr [rbp-4], edi");
-  emit_raw("  lea rsi, [rbp-1]");
+  emit_raw("  mov edx, ecx");
+  emit_raw("  lea rcx, [rip + .FMT_INT]");
+#else
+  emit_raw("  mov esi, edi");
+  emit_raw("  lea rdi, [rip + .FMT_INT]");
+#endif
   emit_raw("  xor eax, eax");
-  emit_raw("  mov [rsi], al");
-  emit_raw("  dec rsi");
-  emit_raw("  mov eax, dword ptr [rbp-4]");
-  emit_raw("  mov ecx, 10");
-  emit_raw("  cmp eax, 0");
-  emit_raw("  jne .L_help_digit_loop");
-  emit_raw("  mov al, 0x30");
-  emit_raw("  mov [rsi], al");
-  emit_raw("  dec rsi");
-  emit_raw("  jmp .L_help_print");
-  emit_raw(".L_help_digit_loop:");
-  emit_raw("  xor edx, edx");
-  emit_raw("  div ecx");
-  emit_raw("  add dl, 0x30");
-  emit_raw("  mov [rsi], dl");
-  emit_raw("  dec rsi");
-  emit_raw("  test eax, eax");
-  emit_raw("  jnz .L_help_digit_loop");
-  emit_raw(".L_help_print:");
-  emit_raw("  inc rsi");
-  emit_raw("  lea rax, [rbp-1]");
-  emit_raw("  sub rax, rsi");
-  emit_raw("  mov rdx, rax");
-  emit_raw("  mov rdi, 1");
-  emit_raw("  mov rax, 1");
-  emit_raw("  syscall");
+  emit_raw("  call printf");
+#ifdef _WIN32
+  emit_raw("  add rsp, 32");
+#endif
   emit_raw("  leave");
   emit_raw("  ret");
 }
@@ -89,13 +75,6 @@ std::string Codegen::generate() {
   emit_raw(".intel_syntax noprefix");
   emit_raw(".section .text");
 
-  emit_raw(".global _start");
-  emit_raw("_start:");
-  emit_raw("  call main");
-  emit_raw("  mov rdi, rax");
-  emit_raw("  mov rax, 60");
-  emit_raw("  syscall");
-
   for (auto& fn : prog->functions) gen_function(fn.get());
 
   emit_helpers();
@@ -103,7 +82,9 @@ std::string Codegen::generate() {
   emit_rodata();
   emit_raw(rodata_.str());
 
+#ifndef _WIN32
   emit_raw(".section .note.GNU-stack,\"\",@progbits");
+#endif
   return asm_.str();
 }
 
@@ -119,12 +100,23 @@ void Codegen::gen_function(FnDecl* fn) {
   emit_raw("  mov rbp, rsp");
   emit_raw("  sub rsp, 1024");
 
-  for (size_t i = 0; i < fn->params.size(); i++) {
-    stack_offs += 8;
-    locals[fn->params[i].name] = stack_offs;
-    static const char* regs[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-    if (i < 6)
+  {
+#ifdef _WIN32
+    int max_param_regs = 4;
+    const char* regs[] = {"rcx", "rdx", "r8", "r9"};
+#else
+    int max_param_regs = 6;
+    const char* regs[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+#endif
+    for (size_t i = 0; i < fn->params.size() && i < (size_t)max_param_regs; i++) {
+      stack_offs += 8;
+      locals[fn->params[i].name] = stack_offs;
       emit_raw(std::string("  mov [rbp - ") + std::to_string(stack_offs) + "], " + regs[i]);
+    }
+    for (size_t i = max_param_regs; i < fn->params.size(); i++) {
+      stack_offs += 8;
+      locals[fn->params[i].name] = stack_offs;
+    }
   }
 
   gen_block(fn->body.get());
@@ -144,7 +136,7 @@ void Codegen::gen_stmt(Stmt* stmt) {
   else if (auto* w = dynamic_cast<WhileStmt*>(stmt))     gen_while(w);
   else if (auto* f = dynamic_cast<ForStmt*>(stmt))       gen_for(f);
   else if (auto* r = dynamic_cast<ReturnStmt*>(stmt))    gen_return(r);
-  else if (auto* b = dynamic_cast<BreakStmt*>(stmt))     gen_break(b);
+  else if (auto* bpr = dynamic_cast<BreakStmt*>(stmt))   gen_break(bpr);
   else if (auto* c = dynamic_cast<ContinueStmt*>(stmt))  gen_continue(c);
   else if (auto* e = dynamic_cast<ExprStmt*>(stmt))      gen_expr_stmt(e);
   else if (auto* b = dynamic_cast<Block*>(stmt))         gen_block(b);
@@ -270,8 +262,8 @@ void Codegen::gen_expr(Expr* expr) {
       return;
     }
     if (u->op == UnaryExpr::ADDR) {
-      if (auto* v = dynamic_cast<VariableExpr*>(u->operand.get())) {
-        auto it = locals.find(v->name);
+      if (auto* va = dynamic_cast<VariableExpr*>(u->operand.get())) {
+        auto it = locals.find(va->name);
         if (it != locals.end())
           emit_raw("  lea rax, [rbp - " + std::to_string(it->second) + "]");
         else
@@ -285,8 +277,8 @@ void Codegen::gen_expr(Expr* expr) {
     }
     if (u->op == UnaryExpr::PLUS_PLUS) {
       emit_raw("  add rax, 1");
-      if (auto* v = dynamic_cast<VariableExpr*>(u->operand.get())) {
-        auto it = locals.find(v->name);
+      if (auto* va = dynamic_cast<VariableExpr*>(u->operand.get())) {
+        auto it = locals.find(va->name);
         if (it != locals.end())
           emit_raw("  mov [rbp - " + std::to_string(it->second) + "], rax");
       }
@@ -294,8 +286,8 @@ void Codegen::gen_expr(Expr* expr) {
     }
     if (u->op == UnaryExpr::MINUS_MINUS) {
       emit_raw("  sub rax, 1");
-      if (auto* v = dynamic_cast<VariableExpr*>(u->operand.get())) {
-        auto it = locals.find(v->name);
+      if (auto* va = dynamic_cast<VariableExpr*>(u->operand.get())) {
+        auto it = locals.find(va->name);
         if (it != locals.end())
           emit_raw("  mov [rbp - " + std::to_string(it->second) + "], rax");
       }
@@ -306,10 +298,10 @@ void Codegen::gen_expr(Expr* expr) {
 
   if (auto* bin = dynamic_cast<BinaryExpr*>(expr)) {
     if (bin->op == BinaryExpr::ASSIGN) {
-      auto* var = dynamic_cast<VariableExpr*>(bin->left.get());
-      if (!var) { errored = true; error = "assign target must be variable"; return; }
+      auto* va = dynamic_cast<VariableExpr*>(bin->left.get());
+      if (!va) { errored = true; error = "assign target must be variable"; return; }
       gen_expr(bin->right.get());
-      auto it = locals.find(var->name);
+      auto it = locals.find(va->name);
       if (it != locals.end())
         emit_raw("  mov [rbp - " + std::to_string(it->second) + "], rax");
       return;
@@ -317,9 +309,9 @@ void Codegen::gen_expr(Expr* expr) {
 
     if (bin->op == BinaryExpr::PLUS_ASSIGN || bin->op == BinaryExpr::MINUS_ASSIGN ||
         bin->op == BinaryExpr::STAR_ASSIGN || bin->op == BinaryExpr::SLASH_ASSIGN) {
-      auto* var = dynamic_cast<VariableExpr*>(bin->left.get());
-      if (!var) { errored = true; error = "compound assign target must be variable"; return; }
-      auto it = locals.find(var->name);
+      auto* va = dynamic_cast<VariableExpr*>(bin->left.get());
+      if (!va) { errored = true; error = "compound assign target must be variable"; return; }
+      auto it = locals.find(va->name);
       if (it == locals.end()) return;
 
       emit_raw("  mov rax, [rbp - " + std::to_string(it->second) + "]");
@@ -350,12 +342,29 @@ void Codegen::gen_expr(Expr* expr) {
       case BinaryExpr::MINUS: emit_raw("  sub rax, rcx"); break;
       case BinaryExpr::STAR:  emit_raw("  imul rax, rcx"); break;
       case BinaryExpr::SLASH: emit_raw("  xor rdx, rdx"); emit_raw("  idiv rcx"); break;
+      case BinaryExpr::MOD:   emit_raw("  xor rdx, rdx"); emit_raw("  idiv rcx"); emit_raw("  mov rax, rdx"); break;
       case BinaryExpr::EQUAL_EQUAL:   emit_raw("  cmp rax, rcx"); emit_raw("  sete al"); emit_raw("  movzx rax, al"); break;
       case BinaryExpr::BANG_EQUAL:    emit_raw("  cmp rax, rcx"); emit_raw("  setne al"); emit_raw("  movzx rax, al"); break;
       case BinaryExpr::LESS:          emit_raw("  cmp rax, rcx"); emit_raw("  setl al"); emit_raw("  movzx rax, al"); break;
       case BinaryExpr::LESS_EQUAL:    emit_raw("  cmp rax, rcx"); emit_raw("  setle al"); emit_raw("  movzx rax, al"); break;
       case BinaryExpr::GREATER:       emit_raw("  cmp rax, rcx"); emit_raw("  setg al"); emit_raw("  movzx rax, al"); break;
       case BinaryExpr::GREATER_EQUAL: emit_raw("  cmp rax, rcx"); emit_raw("  setge al"); emit_raw("  movzx rax, al"); break;
+      case BinaryExpr::AND:
+        emit_raw("  cmp rax, 0");
+        emit_raw("  sete al");
+        emit_raw("  cmp rcx, 0");
+        emit_raw("  setne cl");
+        emit_raw("  and al, cl");
+        emit_raw("  movzx rax, al");
+        break;
+      case BinaryExpr::OR:
+        emit_raw("  cmp rax, 0");
+        emit_raw("  setne al");
+        emit_raw("  cmp rcx, 0");
+        emit_raw("  setne cl");
+        emit_raw("  or al, cl");
+        emit_raw("  movzx rax, al");
+        break;
       default: break;
     }
     return;
@@ -366,14 +375,26 @@ void Codegen::gen_expr(Expr* expr) {
       if (c->args.empty()) return;
       if (auto* se = dynamic_cast<StringExpr*>(c->args[0].get())) {
         std::string lbl = get_string_label(se->value);
+#ifdef _WIN32
+        emit_raw("  sub rsp, 32");
+        emit_raw("  lea rdx, [rip + " + lbl + "]");
+        emit_raw("  lea rcx, [rip + .FMT_STR]");
+#else
         emit_raw("  lea rsi, [rip + " + lbl + "]");
-        emit_raw("  mov rdx, " + std::to_string(se->value.size()));
-        emit_raw("  mov rdi, 1");
-        emit_raw("  mov rax, 1");
-        emit_raw("  syscall");
+        emit_raw("  lea rdi, [rip + .FMT_STR]");
+#endif
+        emit_raw("  xor eax, eax");
+        emit_raw("  call printf");
+#ifdef _WIN32
+        emit_raw("  add rsp, 32");
+#endif
       } else {
         gen_expr(c->args[0].get());
-        emit_raw("  mov rdi, rax");
+#ifdef _WIN32
+        emit_raw("  mov ecx, eax");
+#else
+        emit_raw("  mov edi, eax");
+#endif
         emit_raw("  call print_int");
       }
       return;
@@ -384,7 +405,11 @@ void Codegen::gen_expr(Expr* expr) {
       emit_raw("  push rax");
     }
     for (int i = 0; i < static_cast<int>(c->args.size()) && i < 6; i++) {
+#ifdef _WIN32
+      static const char* regs[] = {"rcx", "rdx", "r8", "r9"};
+#else
       static const char* regs[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+#endif
       emit_raw(std::string("  pop ") + regs[i]);
     }
     emit_raw("  call " + c->callee);

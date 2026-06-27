@@ -125,10 +125,7 @@ std::vector<Token> Lexer::tokenize() {
       case ';': add_token(TokenType::SEMICOLON); break;
       case ',': add_token(TokenType::COMMA); break;
       case '.': add_token(TokenType::DOT); break;
-      case ':':
-        if (match(':')) {}
-        else add_token(TokenType::COLON);
-        break;
+      case ':': add_token(TokenType::COLON); break;
       case '+':
         if (match('+')) add_token(TokenType::PLUS_PLUS);
         else if (match('=')) add_token(TokenType::PLUS_EQUAL);
@@ -163,9 +160,9 @@ std::vector<Token> Lexer::tokenize() {
       case '>':
         add_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
         break;
-      case '&': add_token(match('&') ? TokenType::PIPE : TokenType::AMPERSAND); break;
+      case '&': add_token(match('&') ? TokenType::AND : TokenType::AMPERSAND); break;
       case '|':
-        if (match('|')) {}
+        if (match('|')) add_token(TokenType::OR);
         else add_token(TokenType::PIPE);
         break;
       case '~': add_token(TokenType::TILDE); break;

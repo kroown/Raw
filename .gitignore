@@ -1,5 +1,6 @@
 build/
-*.raw.o
-*.raw.s
-hello
-hello_test
+*.o
+*.s
+*.exe
+test_*
+hello*

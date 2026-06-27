@@ -1,28 +1,28 @@
 # raw
 
-language · linux · raw
+language · cross-platform · raw
 
-<p align="center">
-  <img src="https://skillicons.dev/icons?i=linux,cpp">
-</p>
-
-raw is a c-like systems programming language with a hand-written compiler in c++. targets x86_64 linux.
+raw is a c-like systems programming language with a hand-written compiler in c++. targets x86_64 linux and windows.
 
 ## build
 
 ```bash
 git clone https://github.com/kroown/raw.git
 cd raw
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build
 cmake --build build
-sudo cmake --install build
+sudo cmake --install build   # linux
+# or add build/Debug/rawc.exe to PATH on windows
 ```
+
+**windows note:** requires [MSYS2](https://www.msys2.org) or [MinGW-w64](https://www.mingw-w64.org) for assembling/linking (rawc generates GAS assembly and uses `gcc`).
 
 ## usage
 
 ```bash
 rawc input.raw -o output
-./output
+./output        # linux
+output.exe      # windows
 ```
 
 ## examples
@@ -74,15 +74,32 @@ fn main() -> int {
 }
 ```
 
+for loop and compound assignment:
+
+```
+fn main() -> int {
+    for let i: int = 0; i < 5; i = i + 1 {
+        print("loop\n");
+    }
+    let x: int = 10;
+    x += 5;
+    x *= 2;
+    print("done\n");
+    return x;
+}
+```
+
 ## language
 
 - c-style syntax with `fn` for functions
 - static types: `int`, `char`, `bool`, `str`, `void`
 - `let` for variable declarations
-- `print()` builtin for output
-- if/else, while loops
-- arithmetic, comparison, and boolean operators
-- recursive functions (pending proper stack management)
+- `print()` builtin for output (integers and strings)
+- if/else, while, for loops
+- arithmetic (`+`, `-`, `*`, `/`, `%`), comparison, boolean, and logical (`&&`, `||`) operators
+- pointers, arrays, compound assignment (`+=`, `-=`, `*=`, `/=`)
+- `extern` blocks for FFI (e.g. SDL2)
+- recursive functions
 
 ## architecture
 
@@ -96,6 +113,4 @@ src/
   ast.hpp     — ast node definitions
 ```
 
-the compiler pipeline: source → lexer → tokens → parser → ast → codegen → assembly → `as` → object → `ld` → executable.
-
-
+the compiler pipeline: source → lexer → tokens → parser → ast → codegen → assembly → `gcc` → executable.

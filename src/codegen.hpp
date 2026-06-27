@@ -21,7 +21,6 @@ private:
   std::string error;
   int label_count = 0;
   int string_count = 0;
-  int helper_count = 0;
   std::string current_fn;
   int stack_offs = 0;
   std::unordered_map<std::string, int> locals;

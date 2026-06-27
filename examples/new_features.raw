@@ -1,0 +1,22 @@
+fn main() -> int {
+    let a: int = 1;
+    let b: int = 0;
+    let c: int = 1;
+
+    if a == 1 && b == 1 {
+        print("AND fail\n");
+    } else {
+        print("AND ok\n");
+    }
+
+    if a == 1 || b == 1 {
+        print("OR ok\n");
+    }
+
+    let x: int = 17;
+    let m: int = x % 5;
+    print(m);
+    print("\n");
+
+    return 0;
+}

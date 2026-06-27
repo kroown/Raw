@@ -24,8 +24,9 @@ struct VariableExpr : Expr { std::string name; };
 struct BinaryExpr : Expr {
   enum Op {
     ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN,
-    PLUS, MINUS, STAR, SLASH,
-    EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL
+    PLUS, MINUS, STAR, SLASH, MOD,
+    EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
+    AND, OR
   };
   Op op;
   std::unique_ptr<Expr> left;

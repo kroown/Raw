@@ -236,8 +236,34 @@ std::unique_ptr<Expr> Parser::expression() {
   return assignment();
 }
 
-std::unique_ptr<Expr> Parser::assignment() {
+std::unique_ptr<Expr> Parser::logical_or() {
+  auto expr = logical_and();
+  while (match(TokenType::OR)) {
+    auto right = logical_and();
+    auto b = std::make_unique<BinaryExpr>();
+    b->left = std::move(expr);
+    b->op = BinaryExpr::OR;
+    b->right = std::move(right);
+    expr = std::move(b);
+  }
+  return expr;
+}
+
+std::unique_ptr<Expr> Parser::logical_and() {
   auto expr = equality();
+  while (match(TokenType::AND)) {
+    auto right = equality();
+    auto b = std::make_unique<BinaryExpr>();
+    b->left = std::move(expr);
+    b->op = BinaryExpr::AND;
+    b->right = std::move(right);
+    expr = std::move(b);
+  }
+  return expr;
+}
+
+std::unique_ptr<Expr> Parser::assignment() {
+  auto expr = logical_or();
   if (match({TokenType::EQUAL, TokenType::PLUS_EQUAL, TokenType::MINUS_EQUAL,
              TokenType::STAR_EQUAL, TokenType::SLASH_EQUAL})) {
     TokenType op_t = previous().type;
@@ -308,12 +334,14 @@ std::unique_ptr<Expr> Parser::term() {
 
 std::unique_ptr<Expr> Parser::factor() {
   auto expr = unary();
-  while (match({TokenType::STAR, TokenType::SLASH})) {
+  while (match({TokenType::STAR, TokenType::SLASH, TokenType::PERCENT})) {
     Token op = previous();
     auto right = unary();
     auto b = std::make_unique<BinaryExpr>();
     b->left = std::move(expr);
-    b->op = op.type == TokenType::STAR ? BinaryExpr::STAR : BinaryExpr::SLASH;
+    if (op.type == TokenType::STAR) b->op = BinaryExpr::STAR;
+    else if (op.type == TokenType::SLASH) b->op = BinaryExpr::SLASH;
+    else b->op = BinaryExpr::MOD;
     b->right = std::move(right);
     expr = std::move(b);
   }
