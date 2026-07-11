@@ -1,4 +1,5 @@
 #include "parser.hpp"
+#include <unordered_map>
 
 Parser::Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
 
@@ -25,7 +26,8 @@ Token Parser::consume(TokenType type, std::string msg) {
 void Parser::parse_error(std::string msg) {
   if (errored) return;
   errored = true;
-  error = msg;
+  const Token& t = peek();
+  error = "line " + std::to_string(t.line) + ":" + std::to_string(t.col) + ": " + msg;
 }
 
 Type Parser::parse_type() {
@@ -35,6 +37,16 @@ Type Parser::parse_type() {
   else if (match(TokenType::BOOL_KW)) t.kind = Type::BOOL;
   else if (match(TokenType::STR_KW)) t.kind = Type::STR;
   else if (match(TokenType::VOID_KW)) t.kind = Type::VOID;
+  else if (match(TokenType::STRUCT)) {
+    t.kind = Type::STRUCT;
+    Token name = consume(TokenType::IDENTIFIER, "expected struct name");
+    t.struct_name = name.lexeme;
+  }
+  else if (check(TokenType::IDENTIFIER)) {
+    Token name = advance();
+    t.kind = Type::STRUCT;
+    t.struct_name = name.lexeme;
+  }
   else { parse_error("expected type"); t.kind = Type::INT; return t; }
 
   while (match(TokenType::STAR)) t.ptr_depth++;
@@ -49,9 +61,10 @@ Type Parser::parse_type() {
 std::unique_ptr<Program> Parser::parse() {
   auto prog = std::make_unique<Program>();
   while (!check(TokenType::END)) {
-    if (check(TokenType::FN)) prog->functions.push_back(function());
+    if (check(TokenType::STRUCT)) prog->structs.push_back(struct_decl());
+    else if (check(TokenType::FN)) prog->functions.push_back(function());
     else if (check(TokenType::EXTERN)) extern_block(*prog);
-    else { parse_error("expected function"); break; }
+    else { parse_error("expected function or struct"); break; }
   }
   return prog;
 }
@@ -64,14 +77,38 @@ std::unique_ptr<FnDecl> Parser::function() {
   consume(TokenType::RPAREN, "expected ')'");
   Type ret{Type::VOID};
   if (match(TokenType::ARROW)) ret = parse_type();
+  
+  for (auto& param : p) current_scope_vars[param.name] = param.type;
+  
   auto body = block();
   if (!body) body = std::make_unique<Block>();
+  
+  current_scope_vars.clear();
+  
   auto fn = std::make_unique<FnDecl>();
   fn->name = name.lexeme;
   fn->params = std::move(p);
   fn->return_type = ret;
   fn->body = std::move(body);
   return fn;
+}
+
+std::unique_ptr<StructDecl> Parser::struct_decl() {
+  consume(TokenType::STRUCT, "expected 'struct'");
+  Token name = consume(TokenType::IDENTIFIER, "expected struct name");
+  consume(TokenType::LBRACE, "expected '{'");
+  auto s = std::make_unique<StructDecl>();
+  s->name = name.lexeme;
+  while (!check(TokenType::RBRACE) && !check(TokenType::END)) {
+    Token fname = consume(TokenType::IDENTIFIER, "expected field name");
+    consume(TokenType::COLON, "expected ':'");
+    Type ftype = parse_type();
+    if (errored) break;
+    s->fields.push_back({fname.lexeme, ftype});
+    if (!match(TokenType::COMMA)) break;
+  }
+  consume(TokenType::RBRACE, "expected '}'");
+  return s;
 }
 
 void Parser::extern_block(Program& prog) {
@@ -116,6 +153,7 @@ std::vector<Param> Parser::params() {
 
 std::unique_ptr<Block> Parser::block() {
   if (!match(TokenType::LBRACE)) { parse_error("expected '{'"); return nullptr; }
+  auto saved_vars = current_scope_vars;
   auto b = std::make_unique<Block>();
   while (!check(TokenType::RBRACE) && !check(TokenType::END)) {
     auto stmt = statement();
@@ -123,33 +161,95 @@ std::unique_ptr<Block> Parser::block() {
     else break;
   }
   consume(TokenType::RBRACE, "expected '}'");
+  current_scope_vars = std::move(saved_vars);
   return b;
 }
 
 std::unique_ptr<Stmt> Parser::statement() {
   if (match(TokenType::LET)) return var_decl();
+  if (match(TokenType::CONST)) return var_decl();
+  if (match(TokenType::DEFER)) return defer_stmt();
   if (match(TokenType::IF)) return if_stmt();
   if (match(TokenType::WHILE)) return while_stmt();
   if (match(TokenType::FOR)) return for_stmt();
   if (match(TokenType::RETURN)) return return_stmt();
   if (match(TokenType::BREAK)) return break_stmt();
   if (match(TokenType::CONTINUE)) return continue_stmt();
+  if (match(TokenType::DEFER)) return defer_stmt();
   if (match(TokenType::LBRACE)) { pos--; return block(); }
   return expression_stmt();
 }
 
 std::unique_ptr<Stmt> Parser::var_decl() {
+  bool is_const = false;
+  if (match(TokenType::CONST)) is_const = true;
+  
   Token name = consume(TokenType::IDENTIFIER, "expected variable name");
-  consume(TokenType::COLON, "expected ':'");
-  Type type = parse_type();
+  Type type;
+  bool has_type = false;
+  
+  if (match(TokenType::COLON)) {
+    type = parse_type();
+    has_type = true;
+  }
+  
   std::unique_ptr<Expr> init;
-  if (match(TokenType::EQUAL)) init = expression();
+  if (match(TokenType::EQUAL)) {
+    init = expression();
+    if (!has_type && init) {
+      type = infer_type_from_expr(init.get());
+      has_type = true;
+    }
+  }
+  
   consume(TokenType::SEMICOLON, "expected ';'");
+  
+  if (!has_type) {
+    parse_error("type annotation required when no initializer");
+    type.kind = Type::INT;
+  }
+  
   auto v = std::make_unique<VarDeclStmt>();
   v->name = name.lexeme;
   v->type = type;
   v->initializer = std::move(init);
+  v->is_const = is_const;
+  current_scope_vars[name.lexeme] = type;
   return v;
+}
+
+Type Parser::infer_type_from_expr(Expr* expr) {
+  Type t;
+  if (auto* i = dynamic_cast<IntegerExpr*>(expr)) {
+    t.kind = Type::INT;
+  } else if (auto* s = dynamic_cast<StringExpr*>(expr)) {
+    t.kind = Type::STR;
+  } else if (auto* b = dynamic_cast<BoolExpr*>(expr)) {
+    t.kind = Type::BOOL;
+  } else if (auto* se = dynamic_cast<StructExpr*>(expr)) {
+    t.kind = Type::STRUCT;
+    t.struct_name = se->struct_name;
+  } else if (auto* u = dynamic_cast<UnaryExpr*>(expr)) {
+    if (u->op == UnaryExpr::ADDR) {
+      // &x creates a pointer
+      Type inner = infer_type_from_expr(u->operand.get());
+      t.kind = Type::PTR;
+      t.ptr_depth = 1;
+      if (inner.kind == Type::STRUCT) t.struct_name = inner.struct_name;
+    } else {
+      // For other unary ops, infer from operand
+      t = infer_type_from_expr(u->operand.get());
+    }
+  } else if (auto* bin = dynamic_cast<BinaryExpr*>(expr)) {
+    // For binary ops, infer from left operand
+    t = infer_type_from_expr(bin->left.get());
+  } else if (auto* c = dynamic_cast<CallExpr*>(expr)) {
+    // Function calls default to int
+    t.kind = Type::INT;
+  } else {
+    t.kind = Type::INT;
+  }
+  return t;
 }
 
 std::unique_ptr<Stmt> Parser::if_stmt() {
@@ -222,6 +322,13 @@ std::unique_ptr<Stmt> Parser::break_stmt() {
 std::unique_ptr<Stmt> Parser::continue_stmt() {
   consume(TokenType::SEMICOLON, "expected ';'");
   return std::make_unique<ContinueStmt>();
+}
+
+std::unique_ptr<Stmt> Parser::defer_stmt() {
+  auto stmt = statement();
+  auto d = std::make_unique<DeferStmt>();
+  d->stmt = std::move(stmt);
+  return d;
 }
 
 std::unique_ptr<Stmt> Parser::expression_stmt() {
@@ -419,6 +526,18 @@ std::unique_ptr<Expr> Parser::primary() {
   if (match(TokenType::IDENTIFIER)) {
     auto v = std::make_unique<VariableExpr>();
     v->name = previous().lexeme;
+    auto it = current_scope_vars.find(v->name);
+    if (it != current_scope_vars.end()) v->type = it->second;
+    if (match(TokenType::LBRACE)) {
+      auto se = std::make_unique<StructExpr>();
+      se->struct_name = v->name;
+      while (!check(TokenType::RBRACE) && !check(TokenType::END)) {
+        se->field_values.push_back(expression());
+        if (!check(TokenType::RBRACE)) consume(TokenType::COMMA, "expected ',' or '}'");
+      }
+      consume(TokenType::RBRACE, "expected '}'");
+      return se;
+    }
     return v;
   }
   if (match(TokenType::LPAREN)) {

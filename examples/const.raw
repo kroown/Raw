@@ -1,0 +1,13 @@
+fn main() -> int {
+    const PI = 3;
+    const NAME = "raw";
+    let x = 42;
+    
+    print(PI);
+    print("\n");
+    print(NAME);
+    print("\n");
+    print(x);
+    print("\n");
+    return 0;
+}

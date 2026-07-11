@@ -1,0 +1,32 @@
+struct Point {
+  x: int,
+  y: int,
+}
+
+struct Rect {
+  top_left: Point,
+  width: int,
+  height: int,
+}
+
+fn main() -> int {
+  let p: Point = Point { 10, 20 };
+  let r: Rect = Rect { Point { 0, 0 }, 100, 50 };
+  
+  print(p.x);
+  print("\n");
+  print(p.y);
+  print("\n");
+  
+  print(r.width);
+  print("\n");
+  print(r.height);
+  print("\n");
+  
+  print(r.top_left.x);
+  print("\n");
+  print(r.top_left.y);
+  print("\n");
+  
+  return 0;
+}

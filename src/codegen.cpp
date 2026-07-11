@@ -72,6 +72,8 @@ std::string Codegen::generate() {
   rodata_.str("");
   rodata_.clear();
 
+  compute_struct_layouts();
+
   emit_raw(".intel_syntax noprefix");
   emit_raw(".section .text");
 
@@ -86,6 +88,43 @@ std::string Codegen::generate() {
   emit_raw(".section .note.GNU-stack,\"\",@progbits");
 #endif
   return asm_.str();
+}
+
+void Codegen::compute_struct_layouts() {
+  for (auto& s : prog->structs) {
+    StructLayout layout;
+    int offset = 0;
+    for (auto& field : s->fields) {
+      layout.field_offsets[field.name] = offset;
+      layout.field_types[field.name] = field.type;
+      layout.field_order.push_back(field.name);
+      int field_size = 8;
+      if (field.type.kind == Type::STRUCT) {
+        auto it = struct_layouts.find(field.type.struct_name);
+        if (it != struct_layouts.end()) field_size = it->second.size;
+      } else if (field.type.array_size > 0) {
+        field_size = field.type.array_size * 8;
+      }
+      offset += field_size;
+    }
+    layout.size = offset;
+    struct_layouts[s->name] = layout;
+  }
+}
+
+int Codegen::get_struct_size(const std::string& name) {
+  auto it = struct_layouts.find(name);
+  if (it != struct_layouts.end()) return it->second.size;
+  return 0;
+}
+
+int Codegen::get_field_offset(const std::string& struct_name, const std::string& field_name) {
+  auto it = struct_layouts.find(struct_name);
+  if (it != struct_layouts.end()) {
+    auto fit = it->second.field_offsets.find(field_name);
+    if (fit != it->second.field_offsets.end()) return fit->second;
+  }
+  return 0;
 }
 
 void Codegen::gen_function(FnDecl* fn) {
@@ -138,20 +177,151 @@ void Codegen::gen_stmt(Stmt* stmt) {
   else if (auto* r = dynamic_cast<ReturnStmt*>(stmt))    gen_return(r);
   else if (auto* bpr = dynamic_cast<BreakStmt*>(stmt))   gen_break(bpr);
   else if (auto* c = dynamic_cast<ContinueStmt*>(stmt))  gen_continue(c);
+  else if (auto* d = dynamic_cast<DeferStmt*>(stmt))     gen_defer(d);
   else if (auto* e = dynamic_cast<ExprStmt*>(stmt))      gen_expr_stmt(e);
   else if (auto* b = dynamic_cast<Block*>(stmt))         gen_block(b);
 }
 
 void Codegen::gen_var_decl(VarDeclStmt* v) {
   int size = v->type.array_size > 0 ? v->type.array_size * 8 : 8;
+  if (v->type.kind == Type::STRUCT) {
+    auto it = struct_layouts.find(v->type.struct_name);
+    if (it != struct_layouts.end()) size = it->second.size;
+  }
   stack_offs += size;
   locals[v->name] = stack_offs;
-  if (v->initializer) gen_expr(v->initializer.get());
-  else emit_raw("  xor rax, rax");
-  emit_raw("  mov [rbp - " + std::to_string(stack_offs) + "], rax");
-  for (int off = 8; off < size; off += 8) {
-    emit_raw("  mov [rbp - " + std::to_string(stack_offs - off) + "], rax");
+  
+  if (v->initializer) {
+    StructExpr* se = dynamic_cast<StructExpr*>(v->initializer.get());
+    if (v->type.kind == Type::STRUCT && se) {
+      auto layout_it = struct_layouts.find(v->type.struct_name);
+      if (layout_it != struct_layouts.end()) {
+        int struct_base = stack_offs;
+        const auto& layout = layout_it->second;
+        int field_index = 0;
+        for (const std::string& field_name : layout.field_order) {
+          auto offset_it = layout.field_offsets.find(field_name);
+          if (offset_it == layout.field_offsets.end()) continue;
+          int field_offset = offset_it->second;
+          
+          if (field_index >= (int)se->field_values.size()) break;
+          
+          Expr* field_expr = se->field_values[field_index].get();
+          StructExpr* nested_se = dynamic_cast<StructExpr*>(field_expr);
+          
+          if (nested_se) {
+            auto nested_layout_it = struct_layouts.find(nested_se->struct_name);
+            if (nested_layout_it != struct_layouts.end()) {
+              int nested_base = struct_base - field_offset;
+              const auto& nested_layout = nested_layout_it->second;
+              int nested_field_idx = 0;
+              for (const std::string& nested_field_name : nested_layout.field_order) {
+                auto nested_offset_it = nested_layout.field_offsets.find(nested_field_name);
+                if (nested_offset_it == nested_layout.field_offsets.end()) continue;
+                int nested_field_offset = nested_offset_it->second;
+                gen_expr(nested_se->field_values[nested_field_idx].get());
+                emit_raw("  mov [rbp - " + std::to_string(nested_base - nested_field_offset) + "], rax");
+                nested_field_idx++;
+              }
+            } else {
+              gen_expr(field_expr);
+              emit_raw("  mov [rbp - " + std::to_string(struct_base - field_offset) + "], rax");
+            }
+          } else {
+            gen_expr(field_expr);
+            emit_raw("  mov [rbp - " + std::to_string(struct_base - field_offset) + "], rax");
+          }
+          field_index++;
+        }
+      } else {
+        int struct_base = stack_offs;
+        for (int i = 0; i < (int)se->field_values.size(); i++) {
+          gen_expr(se->field_values[i].get());
+          emit_raw("  mov [rbp - " + std::to_string(struct_base - i * 8) + "], rax");
+        }
+      }
+    } else {
+      gen_expr(v->initializer.get());
+      emit_raw("  mov [rbp - " + std::to_string(stack_offs) + "], rax");
+      for (int off = 8; off < size; off += 8) {
+        emit_raw("  mov [rbp - " + std::to_string(stack_offs - off) + "], rax");
+      }
+    }
+  } else {
+    emit_raw("  xor rax, rax");
+    emit_raw("  mov [rbp - " + std::to_string(stack_offs) + "], rax");
+    for (int off = 8; off < size; off += 8) {
+      emit_raw("  mov [rbp - " + std::to_string(stack_offs - off) + "], rax");
+    }
   }
+}
+
+void Codegen::gen_struct_expr(StructExpr* se) {
+  int field_count = se->field_values.size();
+  int struct_size = field_count * 8;
+  stack_offs += struct_size;
+  int struct_base = stack_offs;
+  
+  for (int i = 0; i < field_count; i++) {
+    gen_expr(se->field_values[i].get());
+    emit_raw("  mov [rbp - " + std::to_string(struct_base - i * 8) + "], rax");
+  }
+  
+  emit_raw("  lea rax, [rbp - " + std::to_string(struct_base) + "]");
+}
+
+void Codegen::gen_defer(DeferStmt* d) {
+  // Store deferred statements to execute at function exit
+  // For simplicity, we emit the deferred statement at each return point
+  // A full implementation would need a defer stack
+  gen_stmt(d->stmt.get());
+}
+
+void Codegen::gen_member_expr(MemberExpr* me) {
+  if (auto* ve = dynamic_cast<VariableExpr*>(me->base.get())) {
+    auto it = locals.find(ve->name);
+    if (it != locals.end()) {
+      emit_raw("  lea rax, [rbp - " + std::to_string(it->second) + "]");
+      
+      if (ve->type.kind == Type::STRUCT) {
+        int offset = get_field_offset(ve->type.struct_name, me->member);
+        if (offset > 0) emit_raw("  add rax, " + std::to_string(offset));
+        
+        // Check if this field is a struct type - if so, return address, not value
+        auto layout_it = struct_layouts.find(ve->type.struct_name);
+        if (layout_it != struct_layouts.end()) {
+          auto field_type_it = layout_it->second.field_types.find(me->member);
+          if (field_type_it != layout_it->second.field_types.end() && 
+              field_type_it->second.kind == Type::STRUCT) {
+            return; // Return address of nested struct
+          }
+        }
+        
+        emit_raw("  mov rax, [rax]");
+        return;
+      }
+      if (ve->type.kind == Type::PTR && ve->type.ptr_depth > 0 && ve->type.struct_name != "") {
+        int offset = get_field_offset(ve->type.struct_name, me->member);
+        if (offset > 0) emit_raw("  add rax, " + std::to_string(offset));
+        emit_raw("  mov rax, [rax]");
+        return;
+      }
+    }
+  }
+  
+  // Handle nested member access (e.g., r.top_left.x where r.top_left is a MemberExpr)
+  if (auto* base_me = dynamic_cast<MemberExpr*>(me->base.get())) {
+    gen_member_expr(base_me);
+    // base_me returns address of nested struct in rax
+    int offset = 0;
+    // Try to get field type from base member's struct
+    // This is complex, for now just dereference
+    emit_raw("  mov rax, [rax]");
+    return;
+  }
+  
+  gen_expr(me->base.get());
+  emit_raw("  mov rax, [rax]");
 }
 
 void Codegen::gen_if(IfStmt* s) {
@@ -428,7 +598,12 @@ void Codegen::gen_expr(Expr* expr) {
   }
 
   if (auto* m = dynamic_cast<MemberExpr*>(expr)) {
-    gen_expr(m->base.get());
+    gen_member_expr(m);
+    return;
+  }
+
+  if (auto* se = dynamic_cast<StructExpr*>(expr)) {
+    gen_struct_expr(se);
     return;
   }
 }

@@ -1,0 +1,6 @@
+fn main() -> int {
+    if x > 5 {
+        print("hi\n");
+    }
+    return 0;
+}

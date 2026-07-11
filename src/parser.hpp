@@ -2,6 +2,7 @@
 #include "ast.hpp"
 #include "token.hpp"
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 class Parser {
@@ -16,6 +17,7 @@ private:
   size_t pos = 0;
   bool errored = false;
   std::string error;
+  std::unordered_map<std::string, Type> current_scope_vars;
 
   const Token& peek() const;
   const Token& previous() const;
@@ -27,6 +29,7 @@ private:
   void parse_error(std::string msg);
 
   std::unique_ptr<FnDecl> function();
+  std::unique_ptr<StructDecl> struct_decl();
   void extern_block(Program& prog);
   std::unique_ptr<Stmt> statement();
   std::unique_ptr<Stmt> var_decl();
@@ -36,6 +39,7 @@ private:
   std::unique_ptr<Stmt> return_stmt();
   std::unique_ptr<Stmt> break_stmt();
   std::unique_ptr<Stmt> continue_stmt();
+  std::unique_ptr<Stmt> defer_stmt();
   std::unique_ptr<Stmt> expression_stmt();
   std::unique_ptr<Block> block();
   std::vector<Param> params();
@@ -52,4 +56,5 @@ private:
   std::unique_ptr<Expr> unary();
   std::unique_ptr<Expr> postfix();
   std::unique_ptr<Expr> primary();
+  Type infer_type_from_expr(Expr* expr);
 };

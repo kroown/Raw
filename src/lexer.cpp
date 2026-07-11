@@ -97,7 +97,7 @@ void Lexer::identifier() {
     {"if", TokenType::IF}, {"else", TokenType::ELSE},
     {"while", TokenType::WHILE}, {"for", TokenType::FOR},
     {"break", TokenType::BREAK}, {"continue", TokenType::CONTINUE},
-    {"let", TokenType::LET}, {"extern", TokenType::EXTERN}, {"sizeof", TokenType::SIZEOF},
+    {"let", TokenType::LET}, {"const", TokenType::CONST}, {"defer", TokenType::DEFER}, {"extern", TokenType::EXTERN}, {"struct", TokenType::STRUCT}, {"sizeof", TokenType::SIZEOF},
     {"int", TokenType::INT_KW}, {"char", TokenType::CHAR_KW},
     {"bool", TokenType::BOOL_KW}, {"str", TokenType::STR_KW},
     {"void", TokenType::VOID_KW},
@@ -170,7 +170,9 @@ std::vector<Token> Lexer::tokenize() {
       default:
         if (std::isdigit(c)) number();
         else if (std::isalpha(c) || c == '_') identifier();
-        else add_token(TokenType::UNKNOWN);
+        else {
+          add_token(TokenType::UNKNOWN);
+        }
         break;
     }
   }

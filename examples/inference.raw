@@ -1,0 +1,19 @@
+fn main() -> int {
+    let x = 42;
+    let y = 10;
+    let z = x + y;
+    let name = "hello";
+    let flag = true;
+    let p = &x;
+    
+    print(x);
+    print("\n");
+    print(y);
+    print("\n");
+    print(z);
+    print("\n");
+    print(name);
+    print("\n");
+    
+    return 0;
+}

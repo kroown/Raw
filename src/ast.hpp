@@ -4,10 +4,11 @@
 #include <vector>
 
 struct Type {
-  enum Kind { INT, CHAR, BOOL, STR, VOID, PTR };
+  enum Kind { INT, CHAR, BOOL, STR, VOID, PTR, STRUCT };
   Kind kind = INT;
   int ptr_depth = 0;
   int array_size = 0;
+  std::string struct_name;
 };
 
 struct ASTNode {
@@ -19,7 +20,7 @@ struct Stmt : ASTNode {};
 struct IntegerExpr : Expr { int64_t value; };
 struct StringExpr : Expr { std::string value; };
 struct BoolExpr : Expr { bool value; };
-struct VariableExpr : Expr { std::string name; };
+struct VariableExpr : Expr { std::string name; Type type; };
 
 struct BinaryExpr : Expr {
   enum Op {
@@ -54,6 +55,21 @@ struct MemberExpr : Expr {
   std::string member;
 };
 
+struct StructField {
+  std::string name;
+  Type type;
+};
+
+struct StructDecl : ASTNode {
+  std::string name;
+  std::vector<StructField> fields;
+};
+
+struct StructExpr : Expr {
+  std::string struct_name;
+  std::vector<std::unique_ptr<Expr>> field_values;
+};
+
 struct SizeofExpr : Expr {
   std::unique_ptr<Expr> operand;
 };
@@ -62,6 +78,7 @@ struct VarDeclStmt : Stmt {
   std::string name;
   Type type;
   std::unique_ptr<Expr> initializer;
+  bool is_const = false;
 };
 
 struct ExprStmt : Stmt {
@@ -93,6 +110,10 @@ struct ForStmt : Stmt {
 struct BreakStmt : Stmt {};
 struct ContinueStmt : Stmt {};
 
+struct DeferStmt : Stmt {
+  std::unique_ptr<Stmt> stmt;
+};
+
 struct Block : Stmt {
   std::vector<std::unique_ptr<Stmt>> statements;
 };
@@ -116,6 +137,7 @@ struct ExternFnDecl : ASTNode {
 };
 
 struct Program : ASTNode {
+  std::vector<std::unique_ptr<StructDecl>> structs;
   std::vector<std::unique_ptr<FnDecl>> functions;
   std::vector<ExternFnDecl> extern_functions;
 };

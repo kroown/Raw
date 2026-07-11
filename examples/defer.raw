@@ -1,0 +1,5 @@
+fn main() -> int {
+    defer print("deferred!\n");
+    print("hello\n");
+    return 0;
+}
